@@ -120,7 +120,7 @@ def main():
                 _WD:{training_args.weight_decay}"
         
             wandb.init(
-                entity="sangha0411",
+                entity="metamong",
                 project=logging_args.project_name,
                 group=group_name,
                 name=name
