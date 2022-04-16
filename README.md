@@ -84,8 +84,6 @@
   --logging_steps 200 \
   --save_steps 1000 \
   --eval_steps 1000 \
-  --load_best_model_at_end \
-  --metric_for_best_model accuracy \
   --model_type lstm \
   --use_rdrop \
   --fp16
