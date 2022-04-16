@@ -95,7 +95,6 @@ class RobertaCNN(RobertaPreTrainedModel):
         self.config = config
 
         self.roberta = RobertaModel(config, add_pooling_layer=False)
-        self.classifier = FlattenClassificationHead(config)
 
         self.cnn_filter1 = nn.Sequential(nn.Conv1d(4, 256, kernel_size=2, stride=1, padding=1), nn.ReLU(), nn.MaxPool1d(config.hidden_size-1))
         self.cnn_filter2 = nn.Sequential(nn.Conv1d(4, 256, kernel_size=3, stride=1, padding=1), nn.ReLU(), nn.MaxPool1d(config.hidden_size-2))
