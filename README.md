@@ -108,7 +108,7 @@
       * Learning rate : 3e-5
       * Train batch size : 256
       * Max input length : 32
-      * Warmup steps : 0.05
+      * Warmup ratio : 0.05
       * Weight decay : 1e-3
       * Model type : LSTM
       * Objective : R-Drop
