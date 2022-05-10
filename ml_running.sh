@@ -1,0 +1,19 @@
+python multi_label_train.py \
+--run_name ml_lstm_3ep \
+--save_path ./checkpoints/ml_lstm_3ep \
+--do_train \
+--do_eval \
+--output_dir /content/results \
+--save_strategy steps \
+--num_train_epochs 3 \
+--learning_rate 5e-5 \
+--per_device_train_batch_size 64 \
+--per_device_eval_batch_size 128 \
+--gradient_accumulation_steps 1 \
+--evaluation_strategy steps \
+--logging_steps 500 \
+--eval_steps 5000 \
+--save_steps 5000 \
+--weight_decay 1e-3 \
+--warmup_ratio 0.05 \
+--use_lstm

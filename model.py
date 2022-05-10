@@ -3,6 +3,46 @@ import torch.nn as nn
 from transformers import RobertaPreTrainedModel, RobertaModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
+class RobertaClassificationHead(nn.Module):
+    """Head for sentence-level classification tasks."""
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(self, features, **kwargs):
+        x = features[:, 0, :]  # take <s> token (equiv. to [CLS])
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+class RobertaClassificationLSTMHead(nn.Module):
+    """Head for sentence-level classification tasks."""
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(self, features, **kwargs):
+        x = features
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+    
 class FlattenClassificationHead(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -293,6 +333,177 @@ class RobertaLSTM(RobertaPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+class ThreeRoberta(RobertaPreTrainedModel):
+    _keys_to_ignore_on_load_missing = [r"position_ids"]
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.config = config
+
+        self.roberta = RobertaModel(config, add_pooling_layer=False)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        
+        config.num_labels = 19
+        self.large_classifier = RobertaClassificationHead(config)
+        config.num_labels = 74
+        self.medium_classifier = RobertaClassificationHead(config)
+        config.num_labels = 225
+        self.small_classifier = RobertaClassificationHead(config)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        large_labels = None,
+        medium_labels = None
+    ):
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        outputs = self.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = outputs[0]
+        
+        large_logits= self.large_classifier(self.dropout(sequence_output))
+        medium_logits= self.medium_classifier(self.dropout(sequence_output))
+        small_logits= self.small_classifier(self.dropout(sequence_output))
+        logits = {
+            'large' : large_logits,
+            'medium' : medium_logits,
+            'small' : small_logits
+        }
+        # else :
+        #     logits = self.small_classifier(self.dropout(sequence_output))
+        
+        loss = None
+        
+        if labels is not None:
+            if large_labels is not None :
+                loss_fct = nn.CrossEntropyLoss()
+                loss = 0.1 * loss_fct(large_logits.view(-1, 19), large_labels.view(-1))\
+                    + 0.2 * loss_fct(medium_logits.view(-1, 74), medium_labels.view(-1))\
+                    + 0.7 * loss_fct(small_logits.view(-1, 225), labels.view(-1))
+            else :
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+class ThreeRobertaWithLSTM(RobertaPreTrainedModel):
+    _keys_to_ignore_on_load_missing = [r"position_ids"]
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.config = config
+
+        self.roberta = RobertaModel(config, add_pooling_layer=False)
+        self.lstm= nn.LSTM(input_size= config.hidden_size, hidden_size= config.hidden_size, num_layers= 2, dropout=config.hidden_dropout_prob,
+                            batch_first= True, bidirectional= True)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        
+        config.num_labels = 19
+        self.large_classifier = RobertaClassificationLSTMHead(config)
+        config.num_labels = 74
+        self.medium_classifier = RobertaClassificationLSTMHead(config)
+        config.num_labels = 225
+        self.small_classifier = RobertaClassificationLSTMHead(config)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        large_labels = None,
+        medium_labels = None
+    ):
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        outputs = self.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = outputs[0]
+        hidden, (last_hidden, last_cell)= self.lstm(sequence_output)
+        concat_hidden = torch.cat((last_hidden[0], last_hidden[1]), dim=1)
+        
+        large_logits= self.large_classifier(self.dropout(concat_hidden))
+        medium_logits= self.medium_classifier(self.dropout(concat_hidden))
+        small_logits= self.small_classifier(self.dropout(concat_hidden))
+        logits = {
+            'large' : large_logits,
+            'medium' : medium_logits,
+            'small' : small_logits
+        }
+        # else :
+        #     logits = self.small_classifier(self.dropout(sequence_output))
+        
+        loss = None
+        
+        if labels is not None:
+            if large_labels is not None :
+                loss_fct = nn.CrossEntropyLoss()
+                loss = 0.1 * loss_fct(large_logits.view(-1, 19), large_labels.view(-1))\
+                    + 0.2 * loss_fct(medium_logits.view(-1, 74), medium_labels.view(-1))\
+                    + 0.7 * loss_fct(small_logits.view(-1, 225), labels.view(-1))
+            else :
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
